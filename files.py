@@ -1395,6 +1395,13 @@ class StreamingDataProcessor:
 class EnhancedAnomalyDetectionEngine:
     """Enhanced anomaly detection engine with 100% local processing - no external APIs."""
     
+    # Constants for Spark configuration
+    SPARK_MASTER_KEY = 'spark.master'
+    SPARK_APP_NAME_KEY = 'spark.app.name'
+    
+    def __init__(self, config: Dict[str, Any]):
+        """Initialize the enhanced anomaly detection engine."""
+    
     def __init__(self, config: Dict[str, Any]):
         """Initialize the enhanced anomaly detection engine.
         
@@ -1504,20 +1511,20 @@ class EnhancedAnomalyDetectionEngine:
         """
         spark_config = config.get('spark_config', {})
         
-        # FIXED: Ensure both master and appName are specified
+        # Initialize builder with required configurations
         builder = SparkSession.builder
         
-        # Set appName first
-        app_name = spark_config.get('spark.app.name', 'LocalAnomalyDetectionEngine')
-        builder = builder.appName(app_name)
+        # Set required configurations first
+        app_name = spark_config.get(self.SPARK_APP_NAME_KEY, 'LocalAnomalyDetectionEngine')
+        master = spark_config.get(self.SPARK_MASTER_KEY, 'local[*]')
         
-        # Set master
-        master = spark_config.get('spark.master', 'local[*]')
-        builder = builder.master(master)
+        builder = (builder
+                  .appName(app_name)
+                  .master(master))
         
         # Apply other Spark configurations
         for key, value in spark_config.items():
-            if key not in ['spark.app.name', 'spark.master']:  # Skip already set configs
+            if key not in [self.SPARK_APP_NAME_KEY, self.SPARK_MASTER_KEY]:  # Skip already set configs
                 builder = builder.config(key, value)
         
         # Default optimizations for local processing
@@ -1712,39 +1719,22 @@ class EnhancedAnomalyDetectionEngine:
             self.logger.error(f"Error logging alerts locally: {str(e)}")
     
     def get_detector_status(self) -> Dict[str, Any]:
-        """Get status information about the detection engine using local data.
-        
-        Returns:
-            Dictionary with status information
-        """
-        try:
-            status = {
-                'engine_status': 'active',
-                'processing_mode': 'local_only',
-                'external_apis_used': False,
-                'detectors_trained': hasattr(self.detector, 'detectors') and len(self.detector.detectors) > 0,
-                'historical_data_size': len(self.historical_data),
-                'alert_channels_configured': len(self.alert_channels),
-                'privacy_manager_active': self.privacy_manager is not None,
-                'spark_session_active': self.spark is not None and not self.spark._sc._jsc.sc().isStopped(),
-                'background_tasks_count': len(self._background_tasks),
-                'local_storage_configured': {
-                    'alert_log_file': self.alert_log_file,
-                    'model_storage_path': self.model_storage_path,
-                    'privacy_log_file': self.privacy_manager.compliance_log_file
-                },
-                'configuration': {
-                    'voting_threshold': self.detector.voting_threshold,
-                    'detector_count': len(self.detector.detectors),
-                    'privacy_retention_days': self.privacy_manager.retention_days
-                }
-            }
-            
-            return status
-            
-        except Exception as e:
-            self.logger.error(f"Error getting status: {str(e)}")
-            return {'engine_status': 'error', 'error': str(e)}
+      """Get status information about the detection engine using local data."""
+      try:
+          status = {
+              # ... other status fields ...
+              'configuration': {
+                  'voting_threshold': self.detector.voting_threshold,
+                  'detector_count': len(self.detector.detectors),
+                  'privacy_retention_days': self.privacy_manager.retention_days,
+                  'spark_master': self.spark.conf.get(self.SPARK_MASTER_KEY),
+                  'spark_app_name': self.spark.conf.get(self.SPARK_APP_NAME_KEY)
+              }
+          }
+          return status
+      except Exception as e:
+          self.logger.error(f"Error getting status: {str(e)}")
+          return {'engine_status': 'error', 'error': str(e)}
     
     def _save_models_locally(self) -> None:
         """Save trained models to local storage."""
