@@ -178,8 +178,15 @@ class EmailAlertChannel(AlertChannel):
             
             msg.attach(MimeText(body, 'plain'))
             
-            # Send email using SMTP protocol (not REST API)
+            # SECURITY FIX: Create secure SSL/TLS context with strong protocols
             context = ssl.create_default_context()
+            context.minimum_version = ssl.TLSVersion.TLSv1_2  # Minimum TLS 1.2
+            context.maximum_version = ssl.TLSVersion.TLSv1_3  # Prefer TLS 1.3
+            context.set_ciphers('ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM:DHE+CHACHA20:!aNULL:!MD5:!DSS')
+            context.check_hostname = True
+            context.verify_mode = ssl.CERT_REQUIRED
+            
+            # Send email using secure SMTP protocol
             with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
                 if self.use_tls:
                     server.starttls(context=context)
@@ -192,8 +199,6 @@ class EmailAlertChannel(AlertChannel):
         except Exception as e:
             self.logger.error(f"Failed to send email alert: {str(e)}")
             return False
-
-
 class LocalSMSAlertChannel(AlertChannel):
     """Local SMS alert channel implementation without external APIs."""
     
