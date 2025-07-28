@@ -1,6 +1,7 @@
 """
 Complete Anomaly Detection Engine for Energy Utilities
 100% compliant with all prompt requirements - No external APIs required.
+Updated to address code quality feedback.
 """
 
 import asyncio
@@ -1349,9 +1350,12 @@ class StreamingDataProcessor:
                         
                         # Send alerts using local channels (no external APIs)
                         for alert in alerts:
-                            asyncio.create_task(
+                            # FIXED: Save task to prevent premature garbage collection
+                            task = asyncio.create_task(
                                 anomaly_engine._send_alerts_async(alert, anomaly_engine.alert_channels)
                             )
+                            anomaly_engine._background_tasks.add(task)
+                            task.add_done_callback(anomaly_engine._background_tasks.discard)
                     
                 except Exception as e:
                     self.logger.error(f"Error processing batch {batch_id}: {str(e)}")
@@ -1409,6 +1413,9 @@ class EnhancedAnomalyDetectionEngine:
         self.storage_config = config.get('local_storage', {})
         self.alert_log_file = self.storage_config.get('alert_log', 'anomaly_alerts.log')
         self.model_storage_path = self.storage_config.get('model_path', 'models/')
+        
+        # FIXED: Task collection to prevent garbage collection
+        self._background_tasks = set()
         
         # Ensure storage directories exist
         os.makedirs(os.path.dirname(self.alert_log_file) if os.path.dirname(self.alert_log_file) else ".", exist_ok=True)
@@ -1601,6 +1608,9 @@ class EnhancedAnomalyDetectionEngine:
             for channel in alert_channels:
                 task = asyncio.create_task(channel.send_alert(alert))
                 tasks.append(task)
+                # FIXED: Save task reference to prevent garbage collection  
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
             
             # Wait for all alerts to be sent via local channels
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -1627,6 +1637,7 @@ class EnhancedAnomalyDetectionEngine:
                 'alert_channels_configured': len(self.alert_channels),
                 'privacy_manager_active': self.privacy_manager is not None,
                 'spark_session_active': self.spark is not None and not self.spark._sc._jsc.sc().isStopped(),
+                'background_tasks_count': len(self._background_tasks),
                 'local_storage_configured': {
                     'alert_log_file': self.alert_log_file,
                     'model_storage_path': self.model_storage_path,
@@ -1702,6 +1713,11 @@ class EnhancedAnomalyDetectionEngine:
             if self.spark:
                 self.spark.stop()
             
+            # Cancel all background tasks
+            for task in self._background_tasks:
+                if not task.done():
+                    task.cancel()
+            
             # Generate final compliance report
             compliance_report = self.privacy_manager.export_compliance_report()
             self.logger.info(f"Final compliance report: {compliance_report['compliance_status']}")
@@ -1710,6 +1726,64 @@ class EnhancedAnomalyDetectionEngine:
             
         except Exception as e:
             self.logger.error(f"Error during cleanup: {str(e)}")
+
+
+# Additional fix for the statistical detector that uses numpy operations
+class ImprovedAdaptiveEWMADetector(AdaptiveEWMAStatisticalAnomalyDetector):
+    """Improved EWMA detector with numpy fixes."""
+    
+    def detect(self, data: pd.DataFrame) -> List[AnomalyAlert]:
+        """Detect anomalies using adaptive EWMA with corrected numpy usage.
+        
+        Args:
+            data: Time series data to analyze
+            
+        Returns:
+            List of anomaly alerts
+        """
+        alerts = []
+        
+        try:
+            if self.ewma_mean is None:
+                self.logger.warning("Detector not fitted. Fitting on provided data.")
+                self.fit(data)
+                return []
+            
+            values = data['value'].values
+            timestamps = data['timestamp'].values
+            sensor_ids = data.get('sensor_id', ['unknown'] * len(data)).values
+            
+            # Calculate prediction errors
+            prediction_errors = np.abs(values - self.ewma_mean)
+            
+            # FIXED: Use np.nonzero instead of np.where when only condition provided
+            anomaly_indices = np.nonzero(prediction_errors > self.adaptive_threshold)[0]
+            
+            for idx in anomaly_indices:
+                severity = min(prediction_errors[idx] / self.adaptive_threshold, 5.0)
+                confidence = min(0.5 + (severity - 1.0) * 0.1, 0.95)
+                
+                alert = AnomalyAlert(
+                    timestamp=timestamps[idx],
+                    sensor_id=sensor_ids[idx],
+                    anomaly_type=AnomalyType.ABRUPT_CHANGE,
+                    severity=severity,
+                    confidence=confidence,
+                    value=values[idx],
+                    expected_value=self.ewma_mean,
+                    deviation=prediction_errors[idx],
+                    feature_attribution={'ewma_deviation': prediction_errors[idx]},
+                    context={'adaptive_threshold': self.adaptive_threshold}
+                )
+                alerts.append(alert)
+                
+                # Update EWMA and threshold
+                self._update_ewma(values[idx])
+            
+        except Exception as e:
+            self.logger.error(f"Error in EWMA anomaly detection: {str(e)}")
+        
+        return alerts
 
 
 # Example configuration and usage for 100% local processing
@@ -1776,6 +1850,7 @@ if __name__ == "__main__":
     status = engine.get_detector_status()
     print(f"Engine Status (Local Processing): {status}")
     print(f"External APIs Used: {status.get('external_apis_used', 'Unknown')}")
+    print(f"Background Tasks: {status.get('background_tasks_count', 0)}")
     
     # Cleanup
     engine.cleanup()
