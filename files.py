@@ -280,42 +280,60 @@ class LocalSMSAlertChannel(AlertChannel):
             return False
     
     async def _send_via_local_gateway(self, message: str) -> int:
-        """Send SMS via local gateway without external APIs.
+    """Send SMS via local gateway without external APIs.
+    
+    Args:
+        message: SMS message to send
         
-        Args:
-            message: SMS message to send
+    Returns:
+        Number of successful sends
+    """
+    try:
+        gateway_type = self.sms_gateway_config.get('type', 'file')
+        
+        if gateway_type == 'file':
+            # SECURITY FIX: Use secure directory creation instead of /tmp
+            gateway_file = self.sms_gateway_config.get('gateway_file', None)
             
-        Returns:
-            Number of successful sends
-        """
-        try:
-            gateway_type = self.sms_gateway_config.get('type', 'file')
-            
-            if gateway_type == 'file':
-                # FIXED: File-based SMS system using async file operations
-                gateway_file = self.sms_gateway_config.get('gateway_file', '/tmp/sms_gateway.txt')
-                os.makedirs(os.path.dirname(gateway_file), exist_ok=True)
-                
-                async with aiofiles.open(gateway_file, 'a', encoding='utf-8') as f:
-                    for phone in self.phone_numbers:
-                        await f.write(f"{datetime.now().isoformat()},{phone},{message}\n")
-                
-                self.logger.info(f"SMS sent via local file gateway to {len(self.phone_numbers)} recipients")
-                return len(self.phone_numbers)
-            
-            elif gateway_type == 'local_modem':
-                # Simulate local modem integration (would require actual hardware)
-                modem_port = self.sms_gateway_config.get('modem_port', '/dev/ttyUSB0')
-                self.logger.info(f"SMS would be sent via local modem on {modem_port}")
-                return len(self.phone_numbers)
-            
+            if not gateway_file:
+                # Create secure gateway file path in user's home directory
+                secure_base_dir = os.path.expanduser("~/.anomaly_detection/sms_gateway")
+                os.makedirs(secure_base_dir, mode=0o700, exist_ok=True)
+                gateway_file = os.path.join(secure_base_dir, 'sms_gateway.txt')
             else:
-                self.logger.warning(f"Unknown gateway type: {gateway_type}")
-                return 0
-                
-        except Exception as e:
-            self.logger.error(f"Error in local SMS gateway: {str(e)}")
+                # Ensure the directory exists with secure permissions
+                gateway_dir = os.path.dirname(gateway_file)
+                if gateway_dir and not os.path.exists(gateway_dir):
+                    os.makedirs(gateway_dir, mode=0o700, exist_ok=True)
+                    
+                    # Verify and fix permissions if needed
+                    if os.path.exists(gateway_dir):
+                        stat_info = os.stat(gateway_dir)
+                        if stat_info.st_mode & 0o077:  # Check if group/other have permissions
+                            self.logger.warning(f"Gateway directory has overly permissive permissions")
+                            os.chmod(gateway_dir, 0o700)
+            
+            async with aiofiles.open(gateway_file, 'a', encoding='utf-8') as f:
+                for phone in self.phone_numbers:
+                    await f.write(f"{datetime.now().isoformat()},{phone},{message}\n")
+            
+            self.logger.info(f"SMS sent via secure local file gateway to {len(self.phone_numbers)} recipients")
+            return len(self.phone_numbers)
+        
+        elif gateway_type == 'local_modem':
+            # Simulate local modem integration (would require actual hardware)
+            modem_port = self.sms_gateway_config.get('modem_port', '/dev/ttyUSB0')
+            self.logger.info(f"SMS would be sent via local modem on {modem_port}")
+            return len(self.phone_numbers)
+        
+        else:
+            self.logger.warning(f"Unknown gateway type: {gateway_type}")
             return 0
+            
+    except Exception as e:
+        self.logger.error(f"Error in local SMS gateway: {str(e)}")
+        return 0
+
 
 
 class PrivacyManager:
@@ -1332,64 +1350,80 @@ class StreamingDataProcessor:
             self.logger.error(f"Error creating streaming DataFrame: {str(e)}")
             raise
     
-    def process_streaming_data(self, streaming_df: SparkDataFrame, 
-                             anomaly_engine: 'EnhancedAnomalyDetectionEngine',
-                             window_duration: str = "5 minutes") -> None:
-        """Process streaming data for anomaly detection without external APIs.
-        
-        Args:
-            streaming_df: Streaming DataFrame
-            anomaly_engine: Anomaly detection engine
-            window_duration: Window duration for micro-batch processing
-        """
-        try:
-            def process_batch(batch_df, batch_id):
-                """Process each micro-batch using local resources only."""
-                try:
-                    if batch_df.count() == 0:
-                        return
+# SECURITY FIX: Use secure checkpoint directory instead of publicly writable /tmp
+def process_streaming_data(self, streaming_df: SparkDataFrame, 
+                         anomaly_engine: 'EnhancedAnomalyDetectionEngine',
+                         window_duration: str = "5 minutes") -> None:
+    """Process streaming data for anomaly detection without external APIs.
+    
+    Args:
+        streaming_df: Streaming DataFrame
+        anomaly_engine: Anomaly detection engine
+        window_duration: Window duration for micro-batch processing
+    """
+    try:
+        def process_batch(batch_df, batch_id):
+            """Process each micro-batch using local resources only."""F
+            try:
+                if batch_df.count() == 0:
+                    return
+                
+                # Convert to pandas for processing
+                pandas_df = batch_df.toPandas()
+                
+                # Apply privacy protection using local algorithms
+                if hasattr(self.privacy_manager, 'anonymize_sensor_data'):
+                    pandas_df = self.privacy_manager.anonymize_sensor_data(
+                        pandas_df, ['location']
+                    )
+                
+                # Detect anomalies using local algorithms
+                alerts = anomaly_engine.detect_anomalies(pandas_df)
+                
+                if alerts:
+                    self.logger.info(f"Batch {batch_id}: Detected {len(alerts)} anomalies")
                     
-                    # Convert to pandas for processing
-                    pandas_df = batch_df.toPandas()
-                    
-                    # Apply privacy protection using local algorithms
-                    if hasattr(self.privacy_manager, 'anonymize_sensor_data'):
-                        pandas_df = self.privacy_manager.anonymize_sensor_data(
-                            pandas_df, ['location']
+                    # Send alerts using local channels (no external APIs)
+                    for alert in alerts:
+                        # FIXED: Save task to prevent premature garbage collection
+                        task = asyncio.create_task(
+                            anomaly_engine._send_alerts_async(alert, anomaly_engine.alert_channels)
                         )
-                    
-                    # Detect anomalies using local algorithms
-                    alerts = anomaly_engine.detect_anomalies(pandas_df)
-                    
-                    if alerts:
-                        self.logger.info(f"Batch {batch_id}: Detected {len(alerts)} anomalies")
-                        
-                        # Send alerts using local channels (no external APIs)
-                        for alert in alerts:
-                            # FIXED: Save task to prevent premature garbage collection
-                            task = asyncio.create_task(
-                                anomaly_engine._send_alerts_async(alert, anomaly_engine.alert_channels)
-                            )
-                            anomaly_engine._background_tasks.add(task)
-                            task.add_done_callback(anomaly_engine._background_tasks.discard)
-                    
-                except Exception as e:
-                    self.logger.error(f"Error processing batch {batch_id}: {str(e)}")
-            
-            # Start streaming query with local checkpoint
-            query = (streaming_df
-                    .writeStream
-                    .foreachBatch(process_batch)
-                    .option("checkpointLocation", "/tmp/anomaly_checkpoint")
-                    .trigger(processingTime=window_duration)
-                    .start())
-            
-            self.logger.info("Started streaming anomaly detection with local processing")
-            return query
-            
-        except Exception as e:
-            self.logger.error(f"Error in streaming processing: {str(e)}")
-            raise
+                        anomaly_engine._background_tasks.add(task)
+                        task.add_done_callback(anomaly_engine._background_tasks.discard)
+                
+            except Exception as e:
+                self.logger.error(f"Error processing batch {batch_id}: {str(e)}")
+        
+        # SECURITY FIX: Create secure checkpoint directory with proper permissions
+        checkpoint_base_dir = os.path.expanduser("~/.anomaly_detection/checkpoints")
+        checkpoint_dir = os.path.join(checkpoint_base_dir, f"stream_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        
+        # Create directory with restrictive permissions (owner read/write/execute only)
+        os.makedirs(checkpoint_dir, mode=0o700, exist_ok=True)
+        
+        # Verify directory permissions for security
+        if os.path.exists(checkpoint_dir):
+            stat_info = os.stat(checkpoint_dir)
+            if stat_info.st_mode & 0o077:  # Check if group/other have any permissions
+                self.logger.warning(f"Checkpoint directory has overly permissive permissions: {oct(stat_info.st_mode)}")
+                # Fix permissions
+                os.chmod(checkpoint_dir, 0o700)
+        
+        # Start streaming query with secure checkpoint
+        query = (streaming_df
+                .writeStream
+                .foreachBatch(process_batch)
+                .option("checkpointLocation", checkpoint_dir)
+                .trigger(processingTime=window_duration)
+                .start())
+        
+        self.logger.info(f"Started streaming anomaly detection with secure checkpoint: {checkpoint_dir}")
+        return query
+        
+    except Exception as e:
+        self.logger.error(f"Error in streaming processing: {str(e)}")
+        raise
 
 
 class EnhancedAnomalyDetectionEngine:
@@ -1769,6 +1803,41 @@ class EnhancedAnomalyDetectionEngine:
         except Exception as e:
             self.logger.error(f"Error during cleanup: {str(e)}")
 
+    def _create_secure_directory(self, directory_path: str) -> str:
+    """Create a directory with secure permissions.
+    
+    Args:
+        directory_path: Path to the directory to create
+        
+    Returns:
+        The created directory path
+        
+    Raises:
+        OSError: If directory creation fails
+    """
+    try:
+        # Expand user home directory if needed
+        if directory_path.startswith('~/'):
+            directory_path = os.path.expanduser(directory_path)
+        
+        # Create directory with restrictive permissions (700 = rwx------)
+        os.makedirs(directory_path, mode=0o700, exist_ok=True)
+        
+        # Verify permissions are correct
+        if os.path.exists(directory_path):
+            stat_info = os.stat(directory_path)
+            current_mode = stat_info.st_mode & 0o777
+            
+            if current_mode != 0o700:
+                self.logger.warning(f"Directory {directory_path} has permissions {oct(current_mode)}, fixing to 700")
+                os.chmod(directory_path, 0o700)
+        
+        self.logger.debug(f"Created secure directory: {directory_path}")
+        return directory_path
+        
+    except Exception as e:
+        self.logger.error(f"Failed to create secure directory {directory_path}: {str(e)}")
+        raise OSError(f"Cannot create secure directory: {str(e)}")
 
 # Example configuration and usage for 100% local processing
 if __name__ == "__main__":
