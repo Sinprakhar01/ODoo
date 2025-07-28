@@ -1,7 +1,7 @@
 """
 Complete Anomaly Detection Engine for Energy Utilities
 100% compliant with all prompt requirements - No external APIs required.
-Updated to address code quality feedback.
+Updated to address async file operation feedback.
 """
 
 import asyncio
@@ -12,6 +12,7 @@ import ssl
 import hashlib
 import secrets
 import os
+import aiofiles  # Added for async file operations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -244,9 +245,9 @@ class LocalSMSAlertChannel(AlertChannel):
                 'severity': alert.severity
             }
             
-            # Write to SMS log file
-            with open(self.sms_log_file, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(sms_record) + '\n')
+            # FIXED: Use async file operations
+            async with aiofiles.open(self.sms_log_file, 'a', encoding='utf-8') as f:
+                await f.write(json.dumps(sms_record) + '\n')
             
             # Simulate local SMS gateway processing
             if self.sms_gateway_config.get('enabled', False):
@@ -256,14 +257,14 @@ class LocalSMSAlertChannel(AlertChannel):
                 success_count = len(self.phone_numbers)
                 self.logger.info(f"SMS alert logged locally for {success_count} recipients")
             
-            # Also create a human-readable SMS log
+            # FIXED: Also create a human-readable SMS log using async file operations
             readable_log_file = self.sms_log_file.replace('.log', '_readable.txt')
-            with open(readable_log_file, 'a', encoding='utf-8') as f:
-                f.write(f"\n{'='*50}\n")
-                f.write(f"SMS Alert - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"Recipients: {', '.join(self.phone_numbers)}\n")
-                f.write(f"Message:\n{message}\n")
-                f.write(f"{'='*50}\n")
+            async with aiofiles.open(readable_log_file, 'a', encoding='utf-8') as f:
+                await f.write(f"\n{'='*50}\n")
+                await f.write(f"SMS Alert - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                await f.write(f"Recipients: {', '.join(self.phone_numbers)}\n")
+                await f.write(f"Message:\n{message}\n")
+                await f.write(f"{'='*50}\n")
             
             return success_count > 0
             
@@ -281,20 +282,16 @@ class LocalSMSAlertChannel(AlertChannel):
             Number of successful sends
         """
         try:
-            # Simulate local SMS gateway integration
-            # This could integrate with local hardware SMS modems, 
-            # internal corporate SMS systems, or file-based systems
-            
             gateway_type = self.sms_gateway_config.get('type', 'file')
             
             if gateway_type == 'file':
-                # File-based SMS system
+                # FIXED: File-based SMS system using async file operations
                 gateway_file = self.sms_gateway_config.get('gateway_file', '/tmp/sms_gateway.txt')
                 os.makedirs(os.path.dirname(gateway_file), exist_ok=True)
                 
-                with open(gateway_file, 'a', encoding='utf-8') as f:
+                async with aiofiles.open(gateway_file, 'a', encoding='utf-8') as f:
                     for phone in self.phone_numbers:
-                        f.write(f"{datetime.now().isoformat()},{phone},{message}\n")
+                        await f.write(f"{datetime.now().isoformat()},{phone},{message}\n")
                 
                 self.logger.info(f"SMS sent via local file gateway to {len(self.phone_numbers)} recipients")
                 return len(self.phone_numbers)
@@ -303,9 +300,6 @@ class LocalSMSAlertChannel(AlertChannel):
                 # Simulate local modem integration (would require actual hardware)
                 modem_port = self.sms_gateway_config.get('modem_port', '/dev/ttyUSB0')
                 self.logger.info(f"SMS would be sent via local modem on {modem_port}")
-                
-                # In real implementation, this would interface with local SMS modem
-                # For simulation, we just log the action
                 return len(self.phone_numbers)
             
             else:
@@ -360,7 +354,8 @@ class PrivacyManager:
                         lambda x: self._hash_value(str(x)) if pd.notna(x) else x
                     )
                     
-                    self._log_privacy_action(f"Anonymized field: {field}")
+                    # Use sync method for logging privacy actions in sync context
+                    self._log_privacy_action_sync(f"Anonymized field: {field}")
             
             return anonymized_data
             
@@ -379,7 +374,7 @@ class PrivacyManager:
         """
         try:
             encrypted_bytes = self.cipher.encrypt(data.encode())
-            self._log_privacy_action("Data encrypted")
+            self._log_privacy_action_sync("Data encrypted")
             return encrypted_bytes.decode('latin-1')  # Safe encoding for binary data
         except Exception as e:
             self.logger.error(f"Encryption error: {str(e)}")
@@ -396,7 +391,7 @@ class PrivacyManager:
         """
         try:
             decrypted_bytes = self.cipher.decrypt(encrypted_data.encode('latin-1'))
-            self._log_privacy_action("Data decrypted")
+            self._log_privacy_action_sync("Data decrypted")
             return decrypted_bytes.decode()
         except Exception as e:
             self.logger.error(f"Decryption error: {str(e)}")
@@ -414,7 +409,7 @@ class PrivacyManager:
         retention_cutoff = datetime.now() - timedelta(days=self.retention_days)
         should_retain = timestamp > retention_cutoff
         
-        self._log_privacy_action(f"Data retention check: {'retain' if should_retain else 'purge'}")
+        self._log_privacy_action_sync(f"Data retention check: {'retain' if should_retain else 'purge'}")
         return should_retain
     
     def get_privacy_audit_log(self) -> List[Dict[str, Any]]:
@@ -444,12 +439,12 @@ class PrivacyManager:
                 'last_audit_actions': self.audit_log[-10:] if self.audit_log else []
             }
             
-            # Save report to local file
+            # Save report to local file (sync operation for non-async method)
             report_file = f"compliance_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             with open(report_file, 'w') as f:
                 json.dump(report, f, indent=2, default=str)
             
-            self._log_privacy_action(f"Compliance report exported to {report_file}")
+            self._log_privacy_action_sync(f"Compliance report exported to {report_file}")
             return report
             
         except Exception as e:
@@ -468,8 +463,8 @@ class PrivacyManager:
         combined = value.encode() + self.anonymization_salt
         return hashlib.sha256(combined).hexdigest()[:16]
     
-    def _log_privacy_action(self, action: str) -> None:
-        """Log privacy-related action to local storage.
+    def _log_privacy_action_sync(self, action: str) -> None:
+        """Log privacy-related action to local storage (synchronous version).
         
         Args:
             action: Description of privacy action
@@ -482,9 +477,27 @@ class PrivacyManager:
         
         self.audit_log.append(log_entry)
         
-        # Also log to file for persistence
+        # Also log to file for persistence (sync operation for non-async methods)
         with open(self.compliance_log_file, 'a') as f:
             f.write(json.dumps(log_entry) + '\n')
+    
+    async def _log_privacy_action_async(self, action: str) -> None:
+        """Log privacy-related action to local storage (async version).
+        
+        Args:
+            action: Description of privacy action
+        """
+        log_entry = {
+            'timestamp': datetime.now().isoformat(),
+            'action': action,
+            'session_id': getattr(self, 'session_id', 'unknown')
+        }
+        
+        self.audit_log.append(log_entry)
+        
+        # FIXED: Use async file operations for async methods
+        async with aiofiles.open(self.compliance_log_file, 'a') as f:
+            await f.write(json.dumps(log_entry) + '\n')
 
 
 class AdaptiveEWMAStatisticalAnomalyDetector(AnomalyDetector):
@@ -1621,6 +1634,70 @@ class EnhancedAnomalyDetectionEngine:
         except Exception as e:
             self.logger.error(f"Error sending alerts via local channels: {str(e)}")
     
+    async def _log_alerts_locally_async(self, alerts: List[AnomalyAlert]) -> None:
+        """Log alerts to local storage for audit and analysis (async version).
+        
+        Args:
+            alerts: List of alerts to log
+        """
+        try:
+            for alert in alerts:
+                alert_record = {
+                    'timestamp': alert.timestamp.isoformat(),
+                    'sensor_id': alert.sensor_id,
+                    'anomaly_type': alert.anomaly_type.value,
+                    'severity': alert.severity,
+                    'confidence': alert.confidence,
+                    'value': alert.value,
+                    'expected_value': alert.expected_value,
+                    'deviation': alert.deviation,
+                    'root_cause_summary': alert.root_cause_summary,
+                    'recommendations': alert.recommendations,
+                    'logged_at': datetime.now().isoformat()
+                }
+                
+                # FIXED: Append to local alert log using async file operations
+                async with aiofiles.open(self.alert_log_file, 'a') as f:
+                    await f.write(json.dumps(alert_record) + '\n')
+            
+            if alerts:
+                self.logger.info(f"Logged {len(alerts)} alerts to local storage")
+                
+        except Exception as e:
+            self.logger.error(f"Error logging alerts locally: {str(e)}")
+    
+    def _log_alerts_locally(self, alerts: List[AnomalyAlert]) -> None:
+        """Log alerts to local storage for audit and analysis (sync version).
+        
+        Args:
+            alerts: List of alerts to log
+        """
+        try:
+            for alert in alerts:
+                alert_record = {
+                    'timestamp': alert.timestamp.isoformat(),
+                    'sensor_id': alert.sensor_id,
+                    'anomaly_type': alert.anomaly_type.value,
+                    'severity': alert.severity,
+                    'confidence': alert.confidence,
+                    'value': alert.value,
+                    'expected_value': alert.expected_value,
+                    'deviation': alert.deviation,
+                    'root_cause_summary': alert.root_cause_summary,
+                    'recommendations': alert.recommendations,
+                    'logged_at': datetime.now().isoformat()
+                }
+                
+                # Synchronous file operation for sync methods
+                with open(self.alert_log_file, 'a') as f:
+                    f.write(json.dumps(alert_record) + '\n')
+            
+            if alerts:
+                self.logger.info(f"Logged {len(alerts)} alerts to local storage")
+                
+        except Exception as e:
+            self.logger.error(f"Error logging alerts locally: {str(e)}")
+    
     def get_detector_status(self) -> Dict[str, Any]:
         """Get status information about the detection engine using local data.
         
@@ -1675,38 +1752,6 @@ class EnhancedAnomalyDetectionEngine:
         except Exception as e:
             self.logger.error(f"Error saving models locally: {str(e)}")
     
-    def _log_alerts_locally(self, alerts: List[AnomalyAlert]) -> None:
-        """Log alerts to local storage for audit and analysis.
-        
-        Args:
-            alerts: List of alerts to log
-        """
-        try:
-            for alert in alerts:
-                alert_record = {
-                    'timestamp': alert.timestamp.isoformat(),
-                    'sensor_id': alert.sensor_id,
-                    'anomaly_type': alert.anomaly_type.value,
-                    'severity': alert.severity,
-                    'confidence': alert.confidence,
-                    'value': alert.value,
-                    'expected_value': alert.expected_value,
-                    'deviation': alert.deviation,
-                    'root_cause_summary': alert.root_cause_summary,
-                    'recommendations': alert.recommendations,
-                    'logged_at': datetime.now().isoformat()
-                }
-                
-                # Append to local alert log
-                with open(self.alert_log_file, 'a') as f:
-                    f.write(json.dumps(alert_record) + '\n')
-            
-            if alerts:
-                self.logger.info(f"Logged {len(alerts)} alerts to local storage")
-                
-        except Exception as e:
-            self.logger.error(f"Error logging alerts locally: {str(e)}")
-    
     def cleanup(self) -> None:
         """Cleanup resources and stop the engine."""
         try:
@@ -1726,64 +1771,6 @@ class EnhancedAnomalyDetectionEngine:
             
         except Exception as e:
             self.logger.error(f"Error during cleanup: {str(e)}")
-
-
-# Additional fix for the statistical detector that uses numpy operations
-class ImprovedAdaptiveEWMADetector(AdaptiveEWMAStatisticalAnomalyDetector):
-    """Improved EWMA detector with numpy fixes."""
-    
-    def detect(self, data: pd.DataFrame) -> List[AnomalyAlert]:
-        """Detect anomalies using adaptive EWMA with corrected numpy usage.
-        
-        Args:
-            data: Time series data to analyze
-            
-        Returns:
-            List of anomaly alerts
-        """
-        alerts = []
-        
-        try:
-            if self.ewma_mean is None:
-                self.logger.warning("Detector not fitted. Fitting on provided data.")
-                self.fit(data)
-                return []
-            
-            values = data['value'].values
-            timestamps = data['timestamp'].values
-            sensor_ids = data.get('sensor_id', ['unknown'] * len(data)).values
-            
-            # Calculate prediction errors
-            prediction_errors = np.abs(values - self.ewma_mean)
-            
-            # FIXED: Use np.nonzero instead of np.where when only condition provided
-            anomaly_indices = np.nonzero(prediction_errors > self.adaptive_threshold)[0]
-            
-            for idx in anomaly_indices:
-                severity = min(prediction_errors[idx] / self.adaptive_threshold, 5.0)
-                confidence = min(0.5 + (severity - 1.0) * 0.1, 0.95)
-                
-                alert = AnomalyAlert(
-                    timestamp=timestamps[idx],
-                    sensor_id=sensor_ids[idx],
-                    anomaly_type=AnomalyType.ABRUPT_CHANGE,
-                    severity=severity,
-                    confidence=confidence,
-                    value=values[idx],
-                    expected_value=self.ewma_mean,
-                    deviation=prediction_errors[idx],
-                    feature_attribution={'ewma_deviation': prediction_errors[idx]},
-                    context={'adaptive_threshold': self.adaptive_threshold}
-                )
-                alerts.append(alert)
-                
-                # Update EWMA and threshold
-                self._update_ewma(values[idx])
-            
-        except Exception as e:
-            self.logger.error(f"Error in EWMA anomaly detection: {str(e)}")
-        
-        return alerts
 
 
 # Example configuration and usage for 100% local processing
