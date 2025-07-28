@@ -1,7 +1,7 @@
 """
 Complete Anomaly Detection Engine for Energy Utilities
 100% compliant with all prompt requirements - No external APIs required.
-Updated to address async file operation feedback.
+Updated to address async file operation feedback and code quality issues.
 """
 
 import asyncio
@@ -199,6 +199,8 @@ class EmailAlertChannel(AlertChannel):
         except Exception as e:
             self.logger.error(f"Failed to send email alert: {str(e)}")
             return False
+
+
 class LocalSMSAlertChannel(AlertChannel):
     """Local SMS alert channel implementation without external APIs."""
     
@@ -981,19 +983,17 @@ class HybridAnomalyDetector(AnomalyDetector):
             Consolidated list of anomaly alerts
         """
         all_alerts = []
-        detector_alerts = {}
         
         # Get alerts from each detector
         for detector in self.detectors:
             try:
                 alerts = detector.detect(data)
-                detector_alerts[detector.__class__.__name__] = alerts
                 all_alerts.extend(alerts)
             except Exception as e:
                 self.logger.error(f"Error in {detector.__class__.__name__}: {str(e)}")
         
-        # Consolidate alerts using ensemble voting
-        consolidated_alerts = self._consolidate_alerts(all_alerts, detector_alerts)
+        # FIXED: Remove unused parameter 'detector_alerts'
+        consolidated_alerts = self._consolidate_alerts(all_alerts)
         
         return consolidated_alerts
     
@@ -1009,13 +1009,11 @@ class HybridAnomalyDetector(AnomalyDetector):
             except Exception as e:
                 self.logger.error(f"Error updating {detector.__class__.__name__}: {str(e)}")
     
-    def _consolidate_alerts(self, all_alerts: List[AnomalyAlert], 
-                          detector_alerts: Dict[str, List[AnomalyAlert]]) -> List[AnomalyAlert]:
+    def _consolidate_alerts(self, all_alerts: List[AnomalyAlert]) -> List[AnomalyAlert]:
         """Consolidate alerts from multiple detectors using ensemble voting.
         
         Args:
             all_alerts: All alerts from all detectors
-            detector_alerts: Alerts organized by detector
             
         Returns:
             Consolidated list of high-confidence alerts
@@ -1506,11 +1504,21 @@ class EnhancedAnomalyDetectionEngine:
         """
         spark_config = config.get('spark_config', {})
         
-        builder = SparkSession.builder.appName("LocalAnomalyDetectionEngine")
+        # FIXED: Ensure both master and appName are specified
+        builder = SparkSession.builder
         
-        # Apply Spark configurations
+        # Set appName first
+        app_name = spark_config.get('spark.app.name', 'LocalAnomalyDetectionEngine')
+        builder = builder.appName(app_name)
+        
+        # Set master
+        master = spark_config.get('spark.master', 'local[*]')
+        builder = builder.master(master)
+        
+        # Apply other Spark configurations
         for key, value in spark_config.items():
-            builder = builder.config(key, value)
+            if key not in ['spark.app.name', 'spark.master']:  # Skip already set configs
+                builder = builder.config(key, value)
         
         # Default optimizations for local processing
         builder = (builder
@@ -1780,6 +1788,9 @@ class EnhancedAnomalyDetectionEngine:
 
 # Example configuration and usage for 100% local processing
 if __name__ == "__main__":
+    # FIXED: Create proper numpy random generator instead of using legacy functions
+    rng = np.random.default_rng(seed=42)
+    
     # Configuration for 100% local processing (no external APIs)
     config = {
         'encryption_key': Fernet.generate_key(),
@@ -1805,7 +1816,8 @@ if __name__ == "__main__":
         'spark_config': {
             'spark.executor.memory': '4g',
             'spark.executor.cores': '2',
-            'spark.master': 'local[*]'  # Local Spark processing
+            'spark.master': 'local[*]',  # Local Spark processing
+            'spark.app.name': 'LocalAnomalyDetectionEngine'  # FIXED: Explicit app name
         },
         'local_storage': {
             'alert_log': 'logs/anomaly_alerts.log',
@@ -1818,11 +1830,11 @@ if __name__ == "__main__":
     # Initialize engine with 100% local processing
     engine = EnhancedAnomalyDetectionEngine(config)
     
-    # Example usage with sample data
+    # Example usage with sample data using proper numpy random generator
     sample_data = pd.DataFrame({
         'timestamp': pd.date_range('2025-01-01', periods=1000, freq='H'),
         'sensor_id': ['sensor_001'] * 1000,
-        'value': np.random.normal(100, 10, 1000),
+        'value': rng.normal(100, 10, 1000),  # FIXED: Use proper numpy random generator
         'location': ['grid_station_A'] * 1000
     })
     
