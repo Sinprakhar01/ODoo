@@ -1512,15 +1512,9 @@ class EnhancedAnomalyDetectionEngine:
         spark_config = config.get('spark_config', {})
         
         # Initialize builder with required configurations
-        builder = SparkSession.builder
-        
-        # Set required configurations first
-        app_name = spark_config.get(self.SPARK_APP_NAME_KEY, 'LocalAnomalyDetectionEngine')
-        master = spark_config.get(self.SPARK_MASTER_KEY, 'local[*]')
-        
-        builder = (builder
-                  .appName(app_name)
-                  .master(master))
+        builder = SparkSession.builder \
+            .appName(spark_config.get(self.SPARK_APP_NAME_KEY, 'LocalAnomalyDetectionEngine')) \
+            .master(spark_config.get(self.SPARK_MASTER_KEY, 'local[*]'))
         
         # Apply other Spark configurations
         for key, value in spark_config.items():
