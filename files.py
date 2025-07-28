@@ -36,7 +36,6 @@ from sklearn.preprocessing import StandardScaler
 from scipy import stats
 from statsmodels.tsa.seasonal import seasonal_decompose
 
-
 class AnomalyType(Enum):
     """Enumeration of different anomaly types that can be detected."""
     ABRUPT_CHANGE = "abrupt_change"
@@ -44,7 +43,6 @@ class AnomalyType(Enum):
     TREND_ANOMALY = "trend_anomaly"
     MULTI_SCALE_ANOMALY = "multi_scale_anomaly"
     STATISTICAL_OUTLIER = "statistical_outlier"
-
 
 @dataclass
 class AnomalyAlert:
@@ -61,7 +59,6 @@ class AnomalyAlert:
     context: Dict[str, Any] = field(default_factory=dict)
     root_cause_summary: str = ""
     recommendations: List[str] = field(default_factory=list)
-
 
 class AnomalyDetector(ABC):
     """Abstract base class for all anomaly detection algorithms."""
@@ -95,7 +92,6 @@ class AnomalyDetector(ABC):
             data: New data to incorporate into the model
         """
         pass
-
 
 class AlertChannel(ABC):
     """Abstract base class for alert delivery channels."""
